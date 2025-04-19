@@ -1,0 +1,64 @@
+parsers:
+  - name: logs
+    format: json
+    time_key: timestamp
+    time_format: '%Y-%m-%dT%H:%M:%S.%L%z'
+pipeline:
+  inputs:
+    - name: tail
+      path: /var/log/application-log/*.log
+      read_from_head: true
+      db: /fluent-bit/application-log.db
+      mem_buf_limit: 20MB
+      parser: logs
+      tag: application-log
+  filters:
+    - name: rewrite_tag
+      match: application-log
+      rule: $context['interaction-log']['operation'] ^.*$ interaction.$context['interaction-log']['operation'] false
+    - name: lua
+      match: 'interaction.*'
+      call: process
+      code: |
+        function process(tag, timestamp, record)
+          local context = record["context"]
+          if context == nil or context["interaction-log"] == nil then
+            -- Drop the record
+            return -1, 0, 0
+          end
+
+          return 2, timestamp, context["interaction-log"]["data"]
+        end
+  outputs:
+    - name: stdout
+      match: 'interaction.*'
+    - name: es
+      match: 'interaction.payment.*'
+      host: ${ELASTICSEARCH_HOST}
+      http_user: ${ELASTICSEARCH_USERNAME}
+      http_passwd: ${ELASTICSEARCH_PASSWORD}
+      index: payments
+      id_key: request_id
+      write_operation: upsert
+      trace_output: on
+      trace_error: on
+      suppress_type_name: on
+      tls: on
+      tls.ca_file: ${ELASTICSEARCH_CA_FILE}
+      tls.crt_file: ${ELASTICSEARCH_CRT_FILE}
+      tls.key_file: ${ELASTICSEARCH_KEY_FILE}
+    - name: es
+      match: 'interaction.payment_processing.*'
+      host: ${ELASTICSEARCH_HOST}
+      http_user: ${ELASTICSEARCH_USERNAME}
+      http_passwd: ${ELASTICSEARCH_PASSWORD}
+      index: payment_processing
+      id_key: operation_id
+      write_operation: upsert
+      trace_output: on
+      trace_error: on
+      suppress_type_name: on
+      tls: on
+      tls.ca_file: ${ELASTICSEARCH_CA_FILE}
+      tls.crt_file: ${ELASTICSEARCH_CRT_FILE}
+      tls.key_file: ${ELASTICSEARCH_KEY_FILE}
